@@ -592,12 +592,61 @@ ${isMultiPage ? `
 • Fully responsive (mobile-first).
 
 ═══════════════════════════════════════════════════
+⛔⛔⛔ CRITICAL: IMPORT RULES - STRICT ENFORCEMENT ⛔⛔⛔
+═══════════════════════════════════════════════════
+
+RULE #1: EVERY JSX FILE MUST IMPORT EVERY COMPONENT IT USES
+
+This applies to ALL files - App.jsx, pages/*.jsx, components/*.jsx:
+- If a file uses <Header />, it MUST have: import Header from "...";
+- If a file uses <Hero />, it MUST have: import Hero from "...";
+- If a file uses <Services />, it MUST have: import Services from "...";
+- NO EXCEPTIONS!
+
+❌ BAD (will crash) - Home.jsx uses components without importing:
+   const Home = () => {
+     return (
+       <div>
+         <Hero />        // ❌ NO IMPORT = CRASH
+         <Services />    // ❌ NO IMPORT = CRASH
+       </div>
+     );
+   };
+
+✅ GOOD (works) - Home.jsx imports everything it uses:
+   import Hero from "../components/Hero";
+   import Services from "../components/Services";
+   
+   const Home = () => {
+     return (
+       <div>
+         <Hero />        // ✅ Imported above
+         <Services />    // ✅ Imported above
+       </div>
+     );
+   };
+
+RULE #2: EVERY IMPORT MUST HAVE A CORRESPONDING FILE
+- If you import "./components/Chart", create src/components/Chart.jsx
+- Create ALL component files BEFORE the files that import them
+
+FILE CREATION ORDER (MANDATORY):
+1. Config files: package.json, vite.config.js, tailwind.config.js, postcss.config.js
+2. Entry files: index.html, src/main.jsx, src/index.css
+3. Component files: ALL components that will be imported
+4. Page files: ALL pages (WITH their imports at the top!)
+5. App.jsx: Create LAST (imports pages/components)
+
+═══════════════════════════════════════════════════
 ✅ EXECUTION RULES
 ═══════════════════════════════════════════════════
 
 ✓ Use file_write tool for EVERY file.
 ✓ Write COMPLETE, working code.
 ✓ Use ONLY packages in package.json.
+✓ EVERY JSX file MUST have imports for components it uses.
+✓ Create ALL component files BEFORE App.jsx and pages.
+✓ VERIFY: Every <Component /> has a matching import.
 ${isMultiPage ? '✓ IMPLEMENT ROUTING.' : '✓ IMPLEMENT SCROLL NAV.'}
 
 Create ALL files NOW using the file_write tool. Start with package.json!`;
@@ -632,6 +681,7 @@ CRITICAL INSTRUCTIONS:
 4. DO NOT start any development server
 5. DO NOT run npm install or any commands
 6. ONLY create the files using file_write tool
+7. Add all packages that you use in the project and also add also installed it and also added in package.json too
 
 REQUIRED FILES TO CREATE:
 
@@ -649,7 +699,9 @@ REQUIRED FILES TO CREATE:
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "lucide-react": "^0.263.1"
+    "lucide-react": "^0.263.1",
+    "react-chartjs-2": "^5.3.1",
+    "chart.js": "^4.5.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",
@@ -698,19 +750,80 @@ html, body, #root {
 - Make fully responsive (mobile-first)
 - Use lucide-react for icons (already in package.json)
 
-📂 **src/components/** - Create these components based on project type:
-${projectType.components.map(c => `- ${c}.jsx`).join('\n')}
+📂 **src/components/** - MANDATORY COMPONENT FILES TO CREATE:
+${projectType.components.map(c => `- src/components/${c}.jsx ← YOU MUST CREATE THIS FILE`).join('\n')}
+
+══════════════════════════════════════════════════════════════════
+⚠️ CRITICAL: MANDATORY FILE CREATION ORDER (FOLLOW EXACTLY)
+══════════════════════════════════════════════════════════════════
+
+STEP 1 - Config Files (Create First):
+  □ package.json
+  □ vite.config.js
+  □ tailwind.config.js
+  □ postcss.config.js
+  □ index.html
+
+STEP 2 - Entry Files:
+  □ src/main.jsx
+  □ src/index.css
+
+STEP 3 - Component Files (Create ALL Before App.jsx):
+${projectType.components.map(c => `  □ src/components/${c}.jsx`).join('\n')}
+
+STEP 4 - Main App (Create LAST - After ALL Components):
+  □ src/App.jsx
+
+══════════════════════════════════════════════════════════════════
+⛔⛔⛔ ABSOLUTE RULES - STRICT ENFORCEMENT (CRASH IF VIOLATED) ⛔⛔⛔
+══════════════════════════════════════════════════════════════════
+
+RULE #1: EVERY JSX FILE MUST IMPORT EVERY COMPONENT IT USES
+
+This applies to App.jsx, pages/*.jsx, AND components/*.jsx:
+- If a file uses <Header />, it MUST have: import Header from "...";
+- If a file uses <Hero />, it MUST have: import Hero from "...";
+- If a file uses <Services />, it MUST have: import Services from "...";
+
+❌ BAD (will CRASH):
+   // In Home.jsx
+   const Home = () => {
+     return (<div><Hero /></div>);  // ❌ No import = undefined = CRASH
+   };
+
+✅ GOOD (works):
+   // In Home.jsx
+   import Hero from "../components/Hero";  // ✅ Import first!
+   const Home = () => {
+     return (<div><Hero /></div>);  // ✅ Works because imported
+   };
+
+RULE #2: EVERY IMPORT MUST HAVE A CORRESPONDING FILE
+- If you write: import Chart from "./components/Chart"
+- You MUST create: src/components/Chart.jsx
+
+RULE #3: CREATE FILES IN ORDER
+1. Config files first
+2. Component files second  
+3. Page files third (WITH imports!)
+4. App.jsx LAST
 
 EXECUTION RULES:
 ✅ Use file_write tool for EVERY file
 ✅ Write COMPLETE code (no truncation)
-✅ Ensure ALL imports are correct
+✅ Create ALL ${projectType.components.length} component files listed above
+✅ EVERY file that uses <ComponentName /> MUST import it
 ✅ Make production-ready
 ❌ DO NOT start dev server
 ❌ DO NOT run npm commands
-❌ DO NOT import packages not in package.json
+❌ DO NOT use components without importing them first
 
-Begin creating ALL files now.`;
+VERIFICATION CHECKLIST (Do this for EVERY JSX file you create):
+□ Look at every <ComponentName /> in the JSX
+□ Ensure there's a matching: import ComponentName from "..."
+□ If import is missing, ADD IT at the top!
+
+Begin creating files NOW. Start with package.json, then config files, then ALL components, then App.jsx LAST.`;
   }
 
   // NEW: Detect project type from user prompt

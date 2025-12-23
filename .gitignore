@@ -45,3 +45,6 @@ coverage/
 # Misc
 *.tsbuildinfo
 .eslintcache
+
+# Reference projects (not part of main codebase)
+bolt.diy/

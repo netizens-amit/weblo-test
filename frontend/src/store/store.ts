@@ -1,9 +1,11 @@
 import { configureStore } from '@reduxjs/toolkit';
 import projectReducer from './slices/projectSlice';
+import webcontainerReducer from './slices/webcontainerSlice';
 
 export const store = configureStore({
     reducer: {
         project: projectReducer,
+        webcontainer: webcontainerReducer,
     },
     middleware: (getDefaultMiddleware) =>
         getDefaultMiddleware({

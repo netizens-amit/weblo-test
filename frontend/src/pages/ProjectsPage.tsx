@@ -2,9 +2,42 @@ import { useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
-import { FolderOpen, FileText, AlertCircle, RefreshCw } from "lucide-react";
+import { FolderOpen, FileText, AlertCircle, RefreshCw, Loader2, Sparkles, CheckCircle2, XCircle } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchProjects, deleteProject } from "@/store/slices/projectSlice";
+import { cn } from "@/lib/utils";
+
+// Get status badge appearance
+function getStatusStyles(status: string) {
+  switch (status) {
+    case 'COMPLETED':
+      return {
+        bg: 'bg-green-100 dark:bg-green-900/30',
+        text: 'text-green-700 dark:text-green-400',
+        icon: CheckCircle2,
+      };
+    case 'FAILED':
+      return {
+        bg: 'bg-red-100 dark:bg-red-900/30',
+        text: 'text-red-700 dark:text-red-400',
+        icon: XCircle,
+      };
+    case 'GENERATING_CODE':
+    case 'ENHANCING_PROMPT':
+    case 'PENDING':
+      return {
+        bg: 'bg-blue-100 dark:bg-blue-900/30',
+        text: 'text-blue-700 dark:text-blue-400',
+        icon: Loader2,
+      };
+    default:
+      return {
+        bg: 'bg-slate-200 dark:bg-slate-700',
+        text: 'text-slate-700 dark:text-slate-300',
+        icon: Sparkles,
+      };
+  }
+}
 
 export function ProjectsPage() {
   const dispatch = useAppDispatch();
@@ -14,6 +47,17 @@ export function ProjectsPage() {
   useEffect(() => {
     dispatch(fetchProjects());
   }, [dispatch]);
+
+  // Refresh generating projects periodically
+  useEffect(() => {
+    const generatingProjects = projects.filter(p => p.status === 'GENERATING_CODE' || p.status === 'ENHANCING_PROMPT' || p.status === 'PENDING');
+    if (generatingProjects.length > 0) {
+      const interval = setInterval(() => {
+        dispatch(fetchProjects());
+      }, 5000); // Refresh every 5 seconds
+      return () => clearInterval(interval);
+    }
+  }, [projects, dispatch]);
 
   console.log("Projects : ", projects);
   const openProject = (id: string) => {
@@ -77,43 +121,87 @@ export function ProjectsPage() {
         {/* Projects Grid */}
         {projects.length > 0 && (
           <div className="grid md:grid-cols-3 gap-6">
-            {projects.map((p) => (
-              <Card key={p.id} className="hover:shadow transition-shadow">
-                <CardContent className="p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="font-semibold">{p.name || "Generated Website"}</h3>
-                      <div className="text-xs text-slate-500">
-                        {p.createdAt ? new Date(p.createdAt).toLocaleString() : 'Date unknown'}
+            {projects.map((p) => {
+              const isGenerating = p.status === 'GENERATING_CODE' || p.status === 'ENHANCING_PROMPT' || p.status === 'PENDING';
+              const statusStyles = getStatusStyles(p.status);
+              const StatusIcon = statusStyles.icon;
+
+              return (
+                <Card
+                  key={p.id}
+                  className={cn(
+                    "relative overflow-hidden transition-all duration-300",
+                    isGenerating && "ring-2 ring-blue-500/50 shadow-lg shadow-blue-500/20",
+                    !isGenerating && "hover:shadow-md"
+                  )}
+                >
+                  {/* Animated glow effect for generating projects */}
+                  {isGenerating && (
+                    <>
+                      {/* Gradient border animation */}
+                      <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-gray-500 via-white/10 to-gray-500 opacity-20 animate-pulse" />
+                      {/* Shimmer effect */}
+                      <div className="absolute inset-0 -translate-x-full animate-[shimmer_2s_infinite] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+                    </>
+                  )}
+
+                  <CardContent className="p-4 space-y-3 relative z-10">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="font-semibold">{p.name || "Generated Website"}</h3>
+                        <div className="text-xs text-slate-500">
+                          {p.createdAt ? new Date(p.createdAt).toLocaleString() : 'Date unknown'}
+                        </div>
                       </div>
+                      <span className={cn(
+                        "flex items-center gap-1 text-xs px-2 py-1 rounded font-medium",
+                        statusStyles.bg,
+                        statusStyles.text
+                      )}>
+                        <StatusIcon className={cn(
+                          "h-3 w-3",
+                          isGenerating && "animate-spin"
+                        )} />
+                        {p.status}
+                      </span>
                     </div>
-                    <span className={`text-xs px-2 py-1 rounded ${
-                      p.status === 'COMPLETED' ? 'bg-green-100 text-green-700' :
-                      p.status === 'FAILED' ? 'bg-red-100 text-red-700' :
-                      p.status === 'PENDING' ? 'bg-yellow-100 text-yellow-700' :
-                      'bg-slate-200 text-slate-700'
-                    }`}>
-                      {p.status}
-                    </span>
-                  </div>
-                  <div className="text-sm text-slate-600 flex items-center gap-2">
-                    <FileText className="h-4 w-4" />
-                    <span>{p.versions?.length ?? 0} versions</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={() => openProject(p.id)}>
-                      Open
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => openProject(p.id)}>
-                      Edit with AI
-                    </Button>
-                    <Button size="sm" className="flex justify-end" variant="outline" onClick={() => handleDeleteProject(p.id)}>
-                      Delete
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+
+                    {/* Generating indicator */}
+                    {isGenerating && (
+                      <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg px-3 py-2 flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-blue-500 animate-pulse" />
+                        <span className="text-sm text-blue-600 dark:text-blue-400">
+                          AI is building your app...
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="text-sm text-slate-600 flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      <span>{p.versions?.length ?? 0} versions</span>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => openProject(p.id)}>
+                        {isGenerating ? 'View Progress' : 'Open'}
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => openProject(p.id)}>
+                        Edit with AI
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="flex justify-end"
+                        variant="outline"
+                        onClick={() => handleDeleteProject(p.id)}
+                        disabled={isGenerating}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         )}
 
@@ -133,6 +221,15 @@ export function ProjectsPage() {
           </div>
         )}
       </div>
+
+      {/* CSS for shimmer animation */}
+      <style>{`
+        @keyframes shimmer {
+          100% {
+            transform: translateX(100%);
+          }
+        }
+      `}</style>
     </div>
   );
 }

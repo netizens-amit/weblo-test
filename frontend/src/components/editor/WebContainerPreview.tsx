@@ -23,8 +23,12 @@ import {
   Monitor,
   Maximize2,
 } from 'lucide-react';
-import { useWebContainer } from '@/hooks/useWebContainer';
-import type { WebContainerStatus } from '@/hooks/useWebContainer';
+import { useAppSelector, useAppDispatch } from '@/store/hooks';
+import {
+  initializeWebContainer,
+  updateWebContainerFile,
+  restartDevServer,
+} from '@/store/slices/webcontainerSlice';
 import FileTree from './FileTree';
 import FileTabs from './FileTabs';
 import CodeEditor from './CodeEditor';
@@ -56,8 +60,17 @@ interface WebContainerPreviewProps {
   isRefining?: boolean;  // Show skeleton loading during refinement
 }
 
+// Status type for StatusIndicator
+type StatusPhase = 'idle' | 'booting' | 'mounting' | 'installing' | 'starting' | 'ready' | 'error';
+
+interface StatusInfo {
+  phase: StatusPhase;
+  message: string;
+  progress?: number;
+}
+
 // Status indicator component
-function StatusIndicator({ status }: { status: WebContainerStatus }) {
+function StatusIndicator({ status }: { status: StatusInfo }) {
   const getStatusIcon = () => {
     switch (status.phase) {
       case 'booting':
@@ -160,7 +173,7 @@ function TerminalPanel({
 }
 
 // Skeleton loading screen with shimmer effect (v0 style)
-function LoadingScreen({ status }: { status: WebContainerStatus }) {
+function LoadingScreen({ status }: { status: StatusInfo }) {
   return (
     <div className="h-full w-full bg-white overflow-hidden relative">
       {/* Shimmer overlay animation */}
@@ -248,9 +261,11 @@ function ErrorScreen({
   error,
   onRetry,
 }: {
-  error: Error;
+  error: string | Error;  // Accept both string and Error
   onRetry: () => void;
 }) {
+  const errorMessage = typeof error === 'string' ? error : error.message;
+
   return (
     <div className="h-full flex flex-col items-center justify-center bg-red-50 p-8">
       <div className="max-w-md w-full text-center">
@@ -260,7 +275,7 @@ function ErrorScreen({
         <h2 className="text-xl font-semibold text-gray-900 mb-2">
           Failed to Start Environment
         </h2>
-        <p className="text-gray-600 text-sm mb-6">{error.message}</p>
+        <p className="text-gray-600 text-sm mb-6">{errorMessage}</p>
         <Button onClick={onRetry} className="bg-red-600 hover:bg-red-700">
           <RefreshCw className="h-4 w-4 mr-2" />
           Retry
@@ -291,8 +306,37 @@ export default function WebContainerPreview({
   const [unsavedFiles, setUnsavedFiles] = useState<Set<string>>(new Set());
   const [localFiles, setLocalFiles] = useState<Record<string, string>>({});
 
-  const { status, previewUrl, terminalOutput, error, isReady, restart, updateFile } =
-    useWebContainer(files);
+  // Use Redux state instead of hook
+  const dispatch = useAppDispatch();
+  const webcontainerState = useAppSelector(state => state.webcontainer);
+  const { status, message, progress, previewUrl, terminalOutput, error } = webcontainerState;
+
+  console.log("uri : ", previewUrl);
+
+  const isReady = status === 'ready';
+
+  // Helper to create status object for StatusIndicator (must match StatusInfo interface)
+  const statusInfo: StatusInfo = { phase: status, message, progress };
+
+  // Initialize WebContainer when files are ready
+  useEffect(() => {
+    const hasFiles = Object.keys(files).length > 0;
+    const hasPackageJson = files['package.json'] || files['/package.json'];
+
+    if (hasFiles && hasPackageJson && status === 'idle') {
+      console.log('🚀 [WebContainerPreview] Initializing with files:', Object.keys(files).length);
+      dispatch(initializeWebContainer(files));
+    }
+  }, [files, status, dispatch]);
+
+  // Functions to use new Redux actions
+  const updateFile = useCallback((path: string, content: string) => {
+    dispatch(updateWebContainerFile({ path, content }));
+  }, [dispatch]);
+
+  const restart = useCallback(() => {
+    dispatch(restartDevServer());
+  }, [dispatch]);
 
   // Initialize local files from props and select first file
   useEffect(() => {
@@ -358,7 +402,7 @@ export default function WebContainerPreview({
           <span className="text-gray-900 font-semibold text-base">
             {title || 'Preview'}
           </span>
-          <StatusIndicator status={status} />
+          <StatusIndicator status={statusInfo} />
           {isDirty && (
             <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
               Unsaved
@@ -373,8 +417,8 @@ export default function WebContainerPreview({
               variant="ghost"
               onClick={() => setViewMode('preview')}
               className={`h-8 px-3 ${viewMode === 'preview'
-                  ? 'bg-white shadow-sm text-gray-900'
-                  : 'text-gray-600'
+                ? 'bg-white shadow-sm text-gray-900'
+                : 'text-gray-600'
                 }`}
             >
               <Eye className="h-4 w-4 mr-1.5" />
@@ -385,8 +429,8 @@ export default function WebContainerPreview({
               variant="ghost"
               onClick={() => setViewMode('code')}
               className={`h-8 px-3 ${viewMode === 'code'
-                  ? 'bg-white shadow-sm text-gray-900'
-                  : 'text-gray-600'
+                ? 'bg-white shadow-sm text-gray-900'
+                : 'text-gray-600'
                 }`}
             >
               <Code className="h-4 w-4 mr-1.5" />
@@ -397,8 +441,8 @@ export default function WebContainerPreview({
               variant="ghost"
               onClick={() => setViewMode('split')}
               className={`h-8 px-3 ${viewMode === 'split'
-                  ? 'bg-white shadow-sm text-gray-900'
-                  : 'text-gray-600'
+                ? 'bg-white shadow-sm text-gray-900'
+                : 'text-gray-600'
                 }`}
             >
               <Columns2 className="h-4 w-4 mr-1.5" />
@@ -470,7 +514,7 @@ export default function WebContainerPreview({
             size="sm"
             variant="ghost"
             onClick={restart}
-            disabled={status.phase === 'booting' || status.phase === 'installing'}
+            disabled={status === 'booting' || status === 'installing'}
             className="h-8 px-2"
           >
             <RefreshCw className="h-4 w-4" />
@@ -494,7 +538,7 @@ export default function WebContainerPreview({
           {error ? (
             <ErrorScreen error={error} onRetry={restart} />
           ) : !isReady || isRefining ? (
-            <LoadingScreen status={isRefining ? { phase: 'mounting', message: 'Updating your website...' } : status} />
+            <LoadingScreen status={isRefining ? { phase: 'mounting', message: 'Updating your website...' } : statusInfo} />
           ) : (
             <div className="h-full flex">
               {/* Code Editor Panel (when in code or split mode) */}
@@ -580,7 +624,8 @@ export default function WebContainerPreview({
                           height: isResponsive ? '100%' : deviceHeight,
                         }}
                         title="Preview"
-                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-storage-access-by-user-activation"
+                        allow="cross-origin-isolated"
                       />
                     </div>
                   </div>

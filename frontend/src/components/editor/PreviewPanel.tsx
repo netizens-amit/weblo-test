@@ -35,6 +35,7 @@ export default function PreviewPanel({
 
     const doc = iframe.contentDocument;
     if (!doc) return;
+    console.log("uri : ", iframeRef);
 
     doc.open();
     doc.write(htmlContent);

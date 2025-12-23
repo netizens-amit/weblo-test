@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ArrowLeft, Send, Loader2 } from 'lucide-react';
 import { TodoProgress } from './TodoProgress';
-import { FileCreationProgress } from './FileCreationProgress';  // 🆕 NEW
+import { GenerationProgress } from './GenerationProgress';  // 🆕 Interactive loading
 
 interface Message {
   id: string;
@@ -95,17 +95,17 @@ export default function ChatPanel({
           </div>
         )}
 
-        {/* 🆕 FILE CREATION PROGRESS (like bolt.diy) */}
-        {(Object.keys(streamingFiles).length > 0 || isGenerating) && (
-          <FileCreationProgress
-            files={streamingFiles}
+        {/* 🆕 INTERACTIVE GENERATION PROGRESS */}
+        {isGenerating && (
+          <GenerationProgress
+            streamingFiles={streamingFiles}
             isGenerating={isGenerating}
-            title={isGenerating ? "Generating React components..." : "Generated Files"}
+            thinkingMessage={thinkingMessage}
           />
         )}
 
-        {/* TODO PROGRESS */}
-        {todos.length > 0 && (
+        {/* TODO PROGRESS - Show when not generating but has completed todos */}
+        {!isGenerating && todos.length > 0 && (
           <div className="my-4">
             <TodoProgress todos={todos} tokenUsage={tokenUsage} isGenerating={isGenerating} />
           </div>
@@ -115,20 +115,19 @@ export default function ChatPanel({
         {messages
           .filter((msg, index) => !(index === 0 && msg.type === 'user' && msg.content === originalPrompt))
           .map((message) => (
-          <div
-            key={message.id}
-            className={`rounded-lg p-4 ${
-              message.type === 'user'
+            <div
+              key={message.id}
+              className={`rounded-lg p-4 ${message.type === 'user'
                 ? 'bg-blue-600 text-white ml-auto max-w-[85%]'
                 : 'bg-slate-800 text-slate-200 border border-slate-700'
-            }`}
-          >
-            {message.stepTitle && (
-              <p className="font-semibold text-sm mb-1">{message.stepTitle}</p>
-            )}
-            <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-          </div>
-        ))}
+                }`}
+            >
+              {message.stepTitle && (
+                <p className="font-semibold text-sm mb-1">{message.stepTitle}</p>
+              )}
+              <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+            </div>
+          ))}
 
         {/* GENERATION COMPLETE */}
         {progress === 100 && !isGenerating && Object.keys(streamingFiles).length > 0 && (

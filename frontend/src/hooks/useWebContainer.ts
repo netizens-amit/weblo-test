@@ -46,9 +46,11 @@ async function getOrBootWebContainer(): Promise<WebContainer> {
         return wcState.bootPromise;
     }
 
-    // Start booting
+    // Start booting with cross-origin isolation enabled
     wcState.booting = true;
-    wcState.bootPromise = WebContainer.boot();
+    wcState.bootPromise = WebContainer.boot({
+        coep: 'credentialless',  // Enable cross-origin isolation for iframe preview
+    });
 
     try {
         wcState.instance = await wcState.bootPromise;
@@ -255,10 +257,26 @@ export function useWebContainer(files: Record<string, string>): UseWebContainerR
                     reject(new Error('Dev server startup timeout (60s)'));
                 }, 60000);
 
+                let resolved = false;
+
+                // Primary: server-ready event
                 container.on('server-ready', (_port, url) => {
+                    if (resolved) return;
+                    resolved = true;
                     clearTimeout(timeout);
                     appendOutput(`✅ Dev server ready at ${url}`);
                     resolve(url);
+                });
+
+                // Backup: port open event (in case server-ready is missed)
+                container.on('port', (port, type, url) => {
+                    appendOutput(`🔌 Port ${port} ${type}: ${url}`);
+                    if (!resolved && type === 'open' && url) {
+                        resolved = true;
+                        clearTimeout(timeout);
+                        appendOutput(`✅ Server available via port event at ${url}`);
+                        resolve(url);
+                    }
                 });
 
                 container.on('error', (err) => {
@@ -358,12 +376,25 @@ export function useWebContainer(files: Record<string, string>): UseWebContainerR
 
     // Initialize on first render with files
     useEffect(() => {
-        const hasFiles = Object.keys(files).length > 0;
+        const fileKeys = Object.keys(files);
+        const hasFiles = fileKeys.length > 0;
         const hasRequiredFiles = files['package.json'] || files['/package.json'];
 
+        // Debug logging to trace file loading
+        console.log('🔍 [WebContainer] File check:', {
+            fileCount: fileKeys.length,
+            hasFiles,
+            hasRequiredFiles: !!hasRequiredFiles,
+            hasInitialized: hasInitialized.current,
+            fileKeys: fileKeys.slice(0, 10),
+        });
+
         if (hasFiles && hasRequiredFiles && !hasInitialized.current) {
+            console.log('🚀 [WebContainer] Starting initialization with files:', fileKeys);
             hasInitialized.current = true;
             initialize();
+        } else if (hasFiles && !hasRequiredFiles) {
+            console.warn('⚠️ [WebContainer] Files present but package.json missing! Keys:', fileKeys);
         }
     }, [files, initialize]);
 

@@ -1,40 +1,40 @@
 import {
-    getEnvironmentConstraints,
-    getArtifactInstructions,
-    getDesignGuidelines,
-    getTechnologyStack,
-    getProjectInterpretation,
-    getExamples,
-    type DesignScheme,
+  getEnvironmentConstraints,
+  getArtifactInstructions,
+  getDesignGuidelines,
+  getTechnologyStack,
+  getProjectInterpretation,
+  getExamples,
+  type DesignScheme,
 } from './sections';
 
 // Inline stripIndents utility
 const stripIndents = (strings: TemplateStringsArray, ...values: any[]): string => {
-    let result = strings.reduce((acc, str, i) => acc + str + (values[i] !== undefined ? values[i] : ''), '');
-    const lines = result.split('\n');
-    const minIndent = lines.filter(l => l.trim()).reduce((min, l) => Math.min(min, l.match(/^(\s*)/)?.[1]?.length || 0), Infinity);
-    return (minIndent !== Infinity && minIndent > 0 ? lines.map(l => l.slice(minIndent)).join('\n') : result).trim();
+  let result = strings.reduce((acc, str, i) => acc + str + (values[i] !== undefined ? values[i] : ''), '');
+  const lines = result.split('\n');
+  const minIndent = lines.filter(l => l.trim()).reduce((min, l) => Math.min(min, l.match(/^(\s*)/)?.[1]?.length || 0), Infinity);
+  return (minIndent !== Infinity && minIndent > 0 ? lines.map(l => l.slice(minIndent)).join('\n') : result).trim();
 };
 
 export interface SystemPromptOptions {
-    workingDirectory: string;
-    userPrompt: string;
-    projectName?: string;
-    designScheme?: DesignScheme;
-    includeExamples?: boolean;
+  workingDirectory: string;
+  userPrompt: string;
+  projectName?: string;
+  designScheme?: DesignScheme;
+  includeExamples?: boolean;
 }
 
 
 export function buildSystemPrompt(options: SystemPromptOptions): string {
-    const {
-        workingDirectory,
-        userPrompt,
-        projectName = 'weblo-app',
-        designScheme,
-        includeExamples = true,
-    } = options;
+  const {
+    workingDirectory,
+    userPrompt,
+    projectName = 'weblo-app',
+    designScheme,
+    includeExamples = true,
+  } = options;
 
-    return stripIndents`
+  return stripIndents`
 You are Weblo AI, an expert software developer and UI/UX designer with vast knowledge across modern web technologies, frameworks, and design best practices.
 
 <core_mission>
@@ -70,6 +70,62 @@ ${includeExamples ? getExamples() : ''}
   6. DO NOT run npm commands
   7. DO NOT import packages not in package.json
   
+  ⚠️⚠️⚠️ ABSOLUTE RULE - EVERY JSX FILE MUST IMPORT COMPONENTS IT USES ⚠️⚠️⚠️
+  
+  This applies to App.jsx, pages/*.jsx, AND components/*.jsx:
+  - If a file uses <Hero />, it MUST have: import Hero from "...";
+  - If a file uses <Services />, it MUST have: import Services from "...";
+  - NO EXCEPTIONS! Every <ComponentName /> needs an import statement.
+  
+  ❌ BAD (will CRASH):
+     // Home.jsx - using components without importing
+     const Home = () => (<div><Hero /><Services /></div>);  // ❌ NO IMPORTS!
+  
+  ✅ GOOD (works):
+     // Home.jsx - imports everything it uses
+     import Hero from "../components/Hero";
+     import Services from "../components/Services";
+     const Home = () => (<div><Hero /><Services /></div>);  // ✅ Works!
+  
+  ⚠️⚠️⚠️ CRITICAL - ARRAY/OBJECT PROPERTY CONSISTENCY ⚠️⚠️⚠️
+  
+  When rendering arrays of objects, ONLY access properties that EXIST on ALL items:
+  
+  ❌ BAD (will CRASH - using undefined property):
+     const values = [
+       { title: "One", description: "..." },  // NO icon property!
+     ];
+     {values.map(v => <v.icon />)}  // ❌ CRASHES! icon is undefined
+  
+  ✅ GOOD (all items have the property):
+     const values = [
+       { title: "One", description: "...", icon: Award },  // HAS icon
+     ];
+     {values.map(v => <v.icon />)}  // ✅ Works!
+  
+  ⚠️⚠️⚠️ DYNAMIC COMPONENT RENDERING ⚠️⚠️⚠️
+  
+  When storing components in objects/arrays, ensure they are:
+  1. Imported at the top of the file
+  2. Assigned to properties that will be used
+  3. Never undefined when rendered
+  
+  ❌ BAD:
+     const item = { Icon: undefined };
+     <item.Icon />  // ❌ CRASHES!
+  
+  ✅ GOOD:
+     import { Star } from 'lucide-react';
+     const item = { Icon: Star };
+     <item.Icon />  // ✅ Works!
+  
+  GENERATION ORDER (MANDATORY):
+  1. First: package.json, vite.config.js, tailwind.config.js, postcss.config.js
+  2. Second: index.html, src/main.jsx, src/index.css
+  3. Third: Create ALL component files (Hero.jsx, Services.jsx, etc.)
+  4. Fourth: Create ALL page files (Home.jsx, About.jsx, etc.) WITH IMPORTS!
+  5. Last: Create App.jsx (imports pages/components)
+  
   PROJECT NAME: ${projectName}
   WORKING DIRECTORY: ${workingDirectory}
 </execution_rules>
@@ -86,7 +142,7 @@ Begin creating ALL files now based on the user's request.
  * Builds a continuation prompt for when the AI needs to continue generating
  */
 export function buildContinuePrompt(): string {
-    return stripIndents`
+  return stripIndents`
 Continue your prior response. IMPORTANT: Immediately begin from where you left off without any interruptions.
 Do not repeat any content, including artifact and action tags.
 `;
@@ -96,11 +152,11 @@ Do not repeat any content, including artifact and action tags.
  * Builds a refinement prompt for editing existing projects
  */
 export function buildRefinementPrompt(
-    workingDirectory: string,
-    refinementRequest: string,
-    existingFiles: string[],
+  workingDirectory: string,
+  refinementRequest: string,
+  existingFiles: string[],
 ): string {
-    return stripIndents`
+  return stripIndents`
 You are Weblo AI, refining an existing React application based on user feedback.
 
 <context>

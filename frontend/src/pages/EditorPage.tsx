@@ -9,7 +9,8 @@ import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { useSSE } from '@/hooks/useSSE';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import ChatPanel from '@/components/editor/ChatPanel';
-import WebContainerPreview from '@/components/editor/WebContainerPreview';  // ✅ NEW
+import WebContainerPreview from '@/components/editor/WebContainerPreview';
+import { InteractiveLoadingScreen } from '@/components/editor/InteractiveLoadingScreen';  // 🆕 NEW
 import { Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import { debounce } from 'lodash';
 import { Button } from '@/components/ui/button';
@@ -198,32 +199,29 @@ export function EditorPage() {
       // Handle both recursive file structure or flat list depending on what API returns
       // The previous code assumed a flat list with filename and content.
       // We'll traverse if it's nested (ProjectFile type) or use as is if flat.
-      // Assuming it returns the same shape as before for now.
+      // Backend returns flat array of { filename: string, content: string }
 
       const processFiles = (list: any[]) => {
         for (const file of list) {
-          if (file.type === 'file' && file.content !== undefined) {
-            // API might return 'name' or 'filename'. Previous code used 'filename'.
-            // projectSlice types usage 'name' and 'path'.
-            // Let's check what backend sends. Backend files.service uses 'name' and 'path' recursion.
-            // But existing frontend code used 'filename'.
-            // We'll support both to be safe during transition.
-            const path = file.filename || file.path;
-            if (path) loadedFiles[path] = file.content;
-          } else if (file.filename && file.content !== undefined) {
+          // Handle flat format: { filename, content }
+          if (file.filename && file.content !== undefined) {
             loadedFiles[file.filename] = file.content;
+            console.log(`📄 Loaded: ${file.filename}`);
+          }
+          // Handle tree format: { type, path/name, content, children }
+          else if (file.type === 'file' && file.content !== undefined) {
+            const filePath = file.path || file.name;
+            if (filePath) loadedFiles[filePath] = file.content;
           }
 
+          // Process children if nested structure
           if (file.children && Array.isArray(file.children)) {
             processFiles(file.children);
           }
         }
-      }
+      };
 
-      // If existing code treated it as flat list of {filename, content}, let's stick to that if possible
-      // but if the API returns a tree (checked files.service), we need recursion.
-      // However, files.service.ts sends 'files' array.
-      // Let's iterate.
+      // Process the files array
       processFiles(filesArray);
 
       if (Object.keys(loadedFiles).length > 0) {
@@ -462,30 +460,12 @@ export function EditorPage() {
 
         {/* 🖼️ RIGHT: PREVIEW PANEL */}
         <Panel defaultSize={65} minSize={40} className="flex flex-col">
-          {/* Show loading state while generating, even if some files exist */}
+          {/* Show InteractiveLoadingScreen during generation */}
           {isGenerating ? (
-            <div className="h-full flex items-center justify-center bg-slate-900">
-              <div className="text-center max-w-md px-6">
-                <div className="relative mb-6">
-                  <Loader2 className="h-16 w-16 text-blue-500 animate-spin mx-auto" />
-                </div>
-                <h3 className="text-white text-xl font-medium mb-2">Generating Your Website</h3>
-                <p className="text-slate-400 text-sm mb-4">
-                  {thinkingMessage || "AI is creating your components..."}
-                </p>
-                {progress > 0 && (
-                  <div className="w-full bg-slate-800 rounded-full h-2 mb-2">
-                    <div
-                      className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-                )}
-                <p className="text-slate-500 text-xs">
-                  {Object.keys(files).length} files created
-                </p>
-              </div>
-            </div>
+            <InteractiveLoadingScreen
+              thinkingMessage={thinkingMessage}
+              streamingFiles={streamingFiles}
+            />
           ) : hasFiles ? (
             <WebContainerPreview
               files={files}

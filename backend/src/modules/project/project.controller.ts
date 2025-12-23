@@ -39,7 +39,7 @@ export class ProjectController {
     @Body() body: {
       name: string;
       prompt: string;
-      preferences?: any; // User preferences from prompt builder
+      preferences?: any; 
     },
   ) {
     try {
@@ -50,7 +50,7 @@ export class ProjectController {
 
       if (!body.prompt || typeof body.prompt !== 'string' || body.prompt.trim().length === 0) {
         throw new BadRequestException('Project prompt is required and must be a non-empty string');
-      }
+      } 
 
       if (body.name.trim().length > 100) {
         throw new BadRequestException('Project name must be 100 characters or less');
@@ -72,7 +72,7 @@ export class ProjectController {
         prompt,
         preferences
       );
-
+      console.log("preferences : ", preferences);
       // Save initial prompt to conversation with preferences metadata
       await this.conversationService.addMessage(
         project.id,
