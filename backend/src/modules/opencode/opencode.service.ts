@@ -256,6 +256,9 @@ export class OpencodeService implements OnModuleInit, OnModuleDestroy {
       // Ensure package.json has required dependencies based on components
       await this.ensurePackageDependencies(projectPath, userPrompt);
 
+      // 🆕 Fix React hooks incorrectly imported from lucide-react
+      await this.fixReactHookImports(projectPath);
+
       // Validate and fix missing imports in components
       await this.validateAndFixComponents(projectPath);
 
@@ -275,12 +278,14 @@ export class OpencodeService implements OnModuleInit, OnModuleDestroy {
       const projectPath = path.join(this.STORAGE_ROOT, projectId, 'sessions', sessionId);
       const existingFiles = await this.getProjectFiles(projectPath);
 
+
       if (existingFiles.length >= 5) {
         // Files were created despite API error - consider it a success
         this.logger.log(`✅ Despite API error, found ${existingFiles.length} files - treating as success`);
         // Still ensure config files
         await this.ensureConfigFiles(projectPath);
         await this.ensurePackageDependencies(projectPath, userPrompt);
+        await this.fixReactHookImports(projectPath);  // 🆕 Fix React hooks
         await this.validateAndFixComponents(projectPath);
         await this.validateAndFixMissingComponents(projectPath);
         await this.validateAndFixAppImports(projectPath);
@@ -332,7 +337,7 @@ export default {
     }
   }
 
-  // 🆕 FALLBACK: Ensure package.json has required dependencies
+  // 🆕 FALLBACK: Ensure package.json has all dependencies used in code
   private async ensurePackageDependencies(projectPath: string, prompt: string): Promise<void> {
     const packageJsonPath = path.join(projectPath, 'package.json');
 
@@ -342,10 +347,71 @@ export default {
 
     try {
       const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
-      const projectType = this.detectProjectType(prompt);
+      packageJson.dependencies = packageJson.dependencies || {};
       let modified = false;
 
-      // If dashboard with Chart component, ensure chart.js dependencies
+      // Known packages and their versions
+      const knownPackages: Record<string, string> = {
+        'react-router-dom': '^6.22.0',
+        'framer-motion': '^11.0.0',
+        'axios': '^1.6.7',
+        'chart.js': '^4.4.1',
+        'react-chartjs-2': '^5.2.0',
+        'recharts': '^2.12.0',
+        '@tanstack/react-query': '^5.17.0',
+        'react-hook-form': '^7.49.0',
+        'zod': '^3.22.0',
+        'date-fns': '^3.3.0',
+        'clsx': '^2.1.0',
+        '@headlessui/react': '^1.7.18',
+        'react-hot-toast': '^2.4.1',
+        'react-icons': '^5.0.1',
+      };
+
+      // Scan all JSX/TSX files for imports
+      const srcPath = path.join(projectPath, 'src');
+      if (await fs.pathExists(srcPath)) {
+        const allFiles = await this.getAllFiles(srcPath);
+
+        for (const filePath of allFiles) {
+          if (!filePath.endsWith('.jsx') && !filePath.endsWith('.tsx') && !filePath.endsWith('.js') && !filePath.endsWith('.ts')) {
+            continue;
+          }
+
+          const content = await fs.readFile(filePath, 'utf-8');
+
+          // Check for each known package
+          for (const [pkg, version] of Object.entries(knownPackages)) {
+            // Check if package is imported
+            const importPattern = new RegExp(`from\\s+['"]${pkg.replace(/[-\/]/g, '\\$&')}['"]|import\\s*['"]${pkg.replace(/[-\/]/g, '\\$&')}['"]`);
+
+            if (importPattern.test(content)) {
+              if (!packageJson.dependencies[pkg] && !packageJson.devDependencies?.[pkg]) {
+                packageJson.dependencies[pkg] = version;
+                modified = true;
+                this.logger.log(`📦 Auto-added missing dependency: ${pkg}@${version}`);
+              }
+            }
+          }
+
+          // Specific check for react-router-dom components
+          if (content.includes('BrowserRouter') || content.includes('Routes') || content.includes('Route') || content.includes('Link')) {
+            if (!packageJson.dependencies['react-router-dom'] && !content.includes("from 'lucide-react'") || content.includes("from 'react-router-dom'")) {
+              // Only add if it looks like routing, not just Link icon
+              if (content.includes("from 'react-router-dom'") || (content.includes('Routes') && content.includes('Route'))) {
+                if (!packageJson.dependencies['react-router-dom']) {
+                  packageJson.dependencies['react-router-dom'] = '^6.22.0';
+                  modified = true;
+                  this.logger.log(`📦 Auto-added react-router-dom (detected routing components)`);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Project type specific dependencies
+      const projectType = this.detectProjectType(prompt);
       if (projectType.type === 'Dashboard' && projectType.components.includes('Chart')) {
         if (!packageJson.dependencies['chart.js']) {
           packageJson.dependencies['chart.js'] = '^4.4.1';
@@ -361,11 +427,30 @@ export default {
 
       if (modified) {
         await fs.writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2), 'utf-8');
-        this.logger.log(`✅ Updated package.json with required dependencies`);
+        this.logger.log(`✅ Updated package.json with ${Object.keys(packageJson.dependencies).length} dependencies`);
       }
     } catch (error) {
       this.logger.error(`Failed to update package.json: ${error.message}`);
     }
+  }
+
+  // Helper to get all files recursively
+  private async getAllFiles(dir: string): Promise<string[]> {
+    const files: string[] = [];
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!['node_modules', 'dist', '.git'].includes(entry.name)) {
+          files.push(...await this.getAllFiles(fullPath));
+        }
+      } else {
+        files.push(fullPath);
+      }
+    }
+
+    return files;
   }
 
   // 🆕 FALLBACK: Validate and fix missing lucide-react imports in components
@@ -418,6 +503,73 @@ export default {
       }
     } catch (error) {
       this.logger.error(`Failed to validate components: ${error.message}`);
+    }
+  }
+
+  // 🆕 CRITICAL FIX: Fix React hooks incorrectly imported from lucide-react
+  // AI sometimes generates: import { useState } from 'lucide-react' instead of 'react'
+  private async fixReactHookImports(projectPath: string): Promise<void> {
+    const srcPath = path.join(projectPath, 'src');
+
+    if (!(await fs.pathExists(srcPath))) {
+      return;
+    }
+
+    try {
+      const allFiles = await this.getAllFiles(srcPath);
+      const reactHooks = ['useState', 'useEffect', 'useCallback', 'useMemo', 'useRef', 'useContext', 'useReducer', 'useLayoutEffect', 'useImperativeHandle', 'useDebugValue'];
+
+      for (const filePath of allFiles) {
+        if (!filePath.endsWith('.jsx') && !filePath.endsWith('.tsx') && !filePath.endsWith('.js')) {
+          continue;
+        }
+
+        let content = await fs.readFile(filePath, 'utf-8');
+        let modified = false;
+
+        // Pattern: import { useState, Menu } from 'lucide-react' or "lucide-react"
+        // Need to separate hooks from icons
+        const lucideImportPattern = /import\s*\{([^}]+)\}\s*from\s*['"]lucide-react['"]/g;
+
+        let match;
+        const newContent = content.replace(lucideImportPattern, (fullMatch, importList) => {
+          const imports = importList.split(',').map((s: string) => s.trim()).filter((s: string) => s);
+
+          const hooks: string[] = [];
+          const icons: string[] = [];
+
+          for (const imp of imports) {
+            if (reactHooks.includes(imp)) {
+              hooks.push(imp);
+            } else {
+              icons.push(imp);
+            }
+          }
+
+          if (hooks.length === 0) {
+            // No hooks found, return original
+            return fullMatch;
+          }
+
+          modified = true;
+          this.logger.log(`🔧 Fixed React hooks in ${path.basename(filePath)}: ${hooks.join(', ')} moved from lucide-react to react`);
+
+          // Build new imports
+          let result = `import { ${hooks.join(', ')} } from 'react'`;
+
+          if (icons.length > 0) {
+            result += `;\nimport { ${icons.join(', ')} } from 'lucide-react'`;
+          }
+
+          return result;
+        });
+
+        if (modified) {
+          await fs.writeFile(filePath, newContent, 'utf-8');
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Failed to fix React hook imports: ${error.message}`);
     }
   }
 
