@@ -9,12 +9,13 @@ export interface Project {
     id: string;
     name: string;
     originalPrompt: string;
-    preferences?: any; // NEW: Store user preferences
+    preferences?: any;
     status: 'PENDING' | 'ENHANCING_PROMPT' | 'GENERATING_CODE' | 'COMPLETED' | 'FAILED';
     progress: number;
     htmlContent?: string;
     cssContent?: string;
     jsContent?: string;
+    sessionId?: string; // OpenCode session ID
     createdAt: string;
     updatedAt: string;
     versions?: Version[];
@@ -36,6 +37,7 @@ export interface ProjectFile {
 }
 
 export interface ConversationMessage {
+    id?: string;
     role: 'user' | 'assistant' | 'system';
     content: string;
     createdAt?: string;
@@ -63,6 +65,9 @@ const initialState: ProjectState = {
 
 // --- Async Thunks ---
 
+/**
+ * 📋 FETCH ALL PROJECTS
+ */
 export const fetchProjects = createAsyncThunk(
     'project/fetchAll',
     async (_, { rejectWithValue }) => {
@@ -75,6 +80,9 @@ export const fetchProjects = createAsyncThunk(
     }
 );
 
+/**
+ * 🔍 FETCH SINGLE PROJECT
+ */
 export const fetchProject = createAsyncThunk(
     'project/fetchOne',
     async (id: string, { rejectWithValue }) => {
@@ -88,7 +96,10 @@ export const fetchProject = createAsyncThunk(
     }
 );
 
-// 🆕 UPDATED: Accept preferences parameter
+/**
+ * ✨ CREATE NEW PROJECT
+ * Creates project in DB, generation happens via SSE stream
+ */
 export const createProject = createAsyncThunk(
     'project/create',
     async ({
@@ -104,18 +115,33 @@ export const createProject = createAsyncThunk(
             const response = await apiInstance.post('/projects', {
                 name,
                 prompt,
-                preferences // Send preferences to backend
+                preferences
             });
-            return response.data.data || response.data;
+
+            const project = response.data.data || response.data;
+
+            // NOTE: Generation will happen via SSE stream in EditorPage
+            // This just creates the project record
+            return project;
         } catch (error) {
             return rejectWithValue(getErrorMessage(error));
         }
     }
 );
 
+/**
+ * 📝 UPDATE PROJECT METADATA
+ * For updating project details (not code generation)
+ */
 export const updateProject = createAsyncThunk(
     'project/update',
-    async ({ id, data }: { id: string; data: Partial<Project> & { changeReason?: string } }, { rejectWithValue }) => {
+    async ({
+        id,
+        data
+    }: {
+        id: string;
+        data: Partial<Project> & { changeReason?: string }
+    }, { rejectWithValue }) => {
         try {
             const response = await apiInstance.patch(`/projects/${id}`, data);
             return response.data.data || response.data;
@@ -125,15 +151,20 @@ export const updateProject = createAsyncThunk(
     }
 );
 
+/**
+ * 🔄 REFINE PROJECT (Legacy - for backwards compatibility)
+ * New refinements should use SSE stream directly
+ * This is kept for API compatibility with existing code
+ */
 export const refineProject = createAsyncThunk(
     'project/refine',
     async ({ id, prompt }: { id: string; prompt: string }, { rejectWithValue }) => {
         try {
-            // Use longer timeout for refinements (5 minutes)
+            // Check if new SSE endpoint exists, otherwise use legacy
             const response = await apiInstance.post(
                 `/projects/${id}/refine`,
                 { prompt },
-                { timeout: 300000 }  // 5 minute timeout for refinements
+                { timeout: 300000 }
             );
             return response.data.data || response.data;
         } catch (error) {
@@ -142,6 +173,9 @@ export const refineProject = createAsyncThunk(
     }
 );
 
+/**
+ * 🗑️ DELETE PROJECT
+ */
 export const deleteProject = createAsyncThunk(
     'project/delete',
     async (id: string, { rejectWithValue }) => {
@@ -154,18 +188,30 @@ export const deleteProject = createAsyncThunk(
     }
 );
 
+/**
+ * 📁 FETCH PROJECT FILES
+ * Gets files from WebContainer/OpenCode session
+ */
 export const fetchProjectFiles = createAsyncThunk(
     'project/fetchFiles',
-    async (projectId: string, { rejectWithValue }) => {
+    async (projectId: string) => {
         try {
             const response = await apiInstance.get(`/projects/${projectId}/files`);
-            return response.data.data?.files || response.data.files || [];
+            const files = response.data.data?.files || response.data.files || response.data;
+
+            // Handle both flat array and nested structure
+            return Array.isArray(files) ? files : [];
         } catch (error) {
-            return rejectWithValue(getErrorMessage(error));
+            console.warn('Failed to fetch project files:', error);
+            // Don't reject, just return empty array for graceful degradation
+            return [];
         }
     }
 );
 
+/**
+ * ⏮️ RESTORE VERSION
+ */
 export const restoreVersion = createAsyncThunk(
     'project/restoreVersion',
     async ({ id, versionNumber }: { id: string; versionNumber: number }, { rejectWithValue }) => {
@@ -178,26 +224,87 @@ export const restoreVersion = createAsyncThunk(
     }
 );
 
+/**
+ * 💬 FETCH CONVERSATION HISTORY
+ * New: Uses /conversation/:projectId endpoint
+ */
 export const fetchConversation = createAsyncThunk(
     'project/fetchConversation',
+    async (projectId: string) => {
+        try {
+            // Try new conversation endpoint first
+            let response;
+            try {
+                response = await apiInstance.get(`/conversation/${projectId}`);
+            } catch (e) {
+                // Fallback to old endpoint for backwards compatibility
+                response = await apiInstance.get(`/projects/${projectId}/conversation`);
+            }
+
+            const data = response.data.data || response.data;
+
+            // Handle different response formats
+            if (Array.isArray(data)) {
+                return { messages: data };
+            }
+
+            return {
+                messages: data.messages || []
+            };
+        } catch (error) {
+            console.warn('Failed to fetch conversation:', error);
+            // Don't reject, return empty for graceful degradation
+            return { messages: [] };
+        }
+    }
+);
+
+/**
+ * 🗑️ CLEAR CONVERSATION
+ */
+export const clearConversation = createAsyncThunk(
+    'project/clearConversation',
     async (projectId: string, { rejectWithValue }) => {
         try {
-            const response = await apiInstance.get(`/projects/${projectId}/conversation`);
-            return response.data.data || response.data || { messages: [] };
+            // Try new endpoint
+            try {
+                await apiInstance.delete(`/conversation/${projectId}`);
+            } catch (e) {
+                // Fallback to old endpoint
+                await apiInstance.post(`/projects/${projectId}/conversation/clear`);
+            }
+            return projectId;
         } catch (error) {
             return rejectWithValue(getErrorMessage(error));
         }
     }
 );
 
-export const clearConversation = createAsyncThunk(
-    'project/clearConversation',
-    async (projectId: string, { rejectWithValue }) => {
+/**
+ * 💬 ADD MESSAGE TO CONVERSATION
+ * New: Directly call conversation API
+ */
+export const addConversationMessage = createAsyncThunk(
+    'project/addMessage',
+    async ({
+        projectId,
+        role,
+        content
+    }: {
+        projectId: string;
+        role: 'user' | 'assistant' | 'system';
+        content: string;
+    }) => {
         try {
-            await apiInstance.post(`/projects/${projectId}/conversation/clear`);
-            return projectId;
+            const response = await apiInstance.post(`/conversation/${projectId}/messages`, {
+                role,
+                content
+            });
+            return response.data.data || response.data;
         } catch (error) {
-            return rejectWithValue(getErrorMessage(error));
+            console.warn('Failed to save message to conversation:', error);
+            // Return message anyway for optimistic UI update
+            return { role, content, createdAt: new Date().toISOString() };
         }
     }
 );
@@ -208,16 +315,92 @@ const projectSlice = createSlice({
     name: 'project',
     initialState,
     reducers: {
+        /**
+         * Clear error state
+         */
         clearError: (state) => {
             state.error = null;
         },
+
+        /**
+         * Reset current project (when navigating away)
+         */
         resetCurrentProject: (state) => {
             state.currentProject = null;
             state.files = [];
             state.conversation = [];
         },
+
+        /**
+         * Add message to conversation (optimistic update)
+         */
         addMessageToConversation: (state, action: PayloadAction<ConversationMessage>) => {
             state.conversation.push(action.payload);
+        },
+
+        /**
+         * Update project status (for SSE updates)
+         */
+        updateProjectStatus: (state, action: PayloadAction<{
+            projectId: string;
+            status: Project['status'];
+            progress?: number;
+        }>) => {
+            const { projectId, status, progress } = action.payload;
+
+            // Update current project
+            if (state.currentProject?.id === projectId) {
+                state.currentProject.status = status;
+                if (progress !== undefined) {
+                    state.currentProject.progress = progress;
+                }
+            }
+
+            // Update in projects list
+            const index = state.projects.findIndex(p => p.id === projectId);
+            if (index !== -1) {
+                state.projects[index].status = status;
+                if (progress !== undefined) {
+                    state.projects[index].progress = progress;
+                }
+            }
+        },
+
+        /**
+         * Update files (for streaming updates)
+         */
+        updateFiles: (state, action: PayloadAction<Record<string, string>>) => {
+            // Convert object to file array
+            const filesObj = action.payload;
+            const newFiles: ProjectFile[] = Object.entries(filesObj).map(([path, content]) => ({
+                name: path.split('/').pop() || path,
+                path,
+                content,
+                type: 'file' as const,
+            }));
+
+            state.files = newFiles;
+        },
+
+        /**
+         * Add single file (for incremental updates)
+         */
+        addFile: (state, action: PayloadAction<{ path: string; content: string }>) => {
+            const { path, content } = action.payload;
+            const existingIndex = state.files.findIndex(f => f.path === path);
+
+            const newFile: ProjectFile = {
+                name: path.split('/').pop() || path,
+                path,
+                content,
+                type: 'file',
+            };
+
+            if (existingIndex !== -1) {
+                state.files[existingIndex] = newFile;
+            } else {
+                state.files.push(newFile);
+            }
         },
     },
     extraReducers: (builder) => {
@@ -273,10 +456,13 @@ const projectSlice = createSlice({
             });
             builder.addCase(thunk.fulfilled, (state, action) => {
                 state.operationLoading = false;
-                state.currentProject = action.payload;
-                const index = state.projects.findIndex(p => p.id === action.payload.id);
+
+                const updatedProject = action.payload.project || action.payload;
+
+                state.currentProject = updatedProject;
+                const index = state.projects.findIndex(p => p.id === updatedProject.id);
                 if (index !== -1) {
-                    state.projects[index] = action.payload;
+                    state.projects[index] = updatedProject;
                 }
             });
             builder.addCase(thunk.rejected, (state, action) => {
@@ -308,18 +494,46 @@ const projectSlice = createSlice({
         builder.addCase(fetchProjectFiles.fulfilled, (state, action) => {
             state.files = action.payload;
         });
+        builder.addCase(fetchProjectFiles.rejected, (state) => {
+            // Don't set error, just keep existing files
+            state.files = [];
+        });
 
         // Fetch Conversation
         builder.addCase(fetchConversation.fulfilled, (state, action) => {
             state.conversation = action.payload.messages || [];
+        });
+        builder.addCase(fetchConversation.rejected, (state) => {
+            // Don't set error, just keep empty conversation
+            state.conversation = [];
         });
 
         // Clear Conversation
         builder.addCase(clearConversation.fulfilled, (state) => {
             state.conversation = [];
         });
+
+        // Add Message
+        builder.addCase(addConversationMessage.fulfilled, (state, action) => {
+            // Check if message already exists (optimistic update)
+            const exists = state.conversation.some(
+                m => m.content === action.payload.content && m.role === action.payload.role
+            );
+
+            if (!exists) {
+                state.conversation.push(action.payload);
+            }
+        });
     },
 });
 
-export const { clearError, resetCurrentProject, addMessageToConversation } = projectSlice.actions;
+export const {
+    clearError,
+    resetCurrentProject,
+    addMessageToConversation,
+    updateProjectStatus,
+    updateFiles,
+    addFile,
+} = projectSlice.actions;
+
 export default projectSlice.reducer;

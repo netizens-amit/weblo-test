@@ -65,6 +65,8 @@ export class ProjectController {
       const prompt = body.prompt.trim();
       const preferences = body.preferences || null;
 
+      console.log('preferences', preferences);
+
       // Create project with preferences
       const project = await this.projectService.createProject(
         userId,

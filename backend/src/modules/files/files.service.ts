@@ -3,6 +3,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as chokidar from 'chokidar';
 import { FilesGateway } from './files.gateway';
+import { SseService } from '../sse/sse.service';
 
 @Injectable()
 export class FilesService {
@@ -16,7 +17,9 @@ export class FilesService {
 
   constructor(
     @Inject(forwardRef(() => FilesGateway))
-    private gateway: FilesGateway
+    private gateway: FilesGateway,
+    @Inject(forwardRef(() => SseService))
+    private sseService: SseService
   ) { }
 
   /**
@@ -85,14 +88,23 @@ export class FilesService {
     const timer = setTimeout(async () => {
       try {
         const content = await fs.readFile(filePath, 'utf-8');
+        const sseEventType = eventType === 'add' ? 'file_created' : 'file_updated';
 
         this.logger.log(`📝 ${eventType === 'add' ? 'File added' : 'File changed'}: ${filename}`);
 
+        // Emit via WebSocket (for Monaco editor real-time sync)
         this.gateway.emitFileChange(projectId, {
           filename,
           content,
           timestamp: new Date().toISOString(),
           isNew: eventType === 'add',
+        });
+
+        // 🆕 Also emit via SSE (for streaming UI in frontend)
+        this.sseService.emitEvent(projectId, sseEventType, {
+          path: filename,
+          content,
+          timestamp: new Date().toISOString(),
         });
       } catch (error) {
         this.logger.error(`Failed to read file ${filename}:`, error);
@@ -111,11 +123,20 @@ export class FilesService {
     try {
       const files = await this.readProjectFilesRecursive(projectPath);
 
-      this.logger.log(`📤 Sending ${files.length} initial files to client`);
+      this.logger.log(`📤 Sending ${files.length} initial files to client (WS + SSE)`);
 
       for (const file of files) {
+        // Send via WebSocket (for Monaco editor real-time sync)
         this.gateway.emitFileChange(projectId, {
           filename: file.filename,
+          content: file.content,
+          timestamp: new Date().toISOString(),
+          isInitial: true,
+        });
+
+        // 🆕 Also send via SSE (for streaming files to WebContainer)
+        this.sseService.emitEvent(projectId, 'file_created', {
+          path: file.filename,
           content: file.content,
           timestamp: new Date().toISOString(),
           isInitial: true,

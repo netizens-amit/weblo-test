@@ -242,11 +242,28 @@ export class OpencodeService implements OnModuleInit, OnModuleDestroy {
 
         if (filesWritten.length > 0) {
           this.logger.log(`✅ Fallback wrote ${filesWritten.length} files`);
+          // Ensure config files exist
+          await this.ensureConfigFiles(projectPath);
           return { message: result, files: filesWritten };
         } else {
           throw new Error('No files were created by OpenCode or fallback parser');
         }
       }
+
+      // Ensure config files exist (vite.config.js, tailwind.config.js, postcss.config.js)
+      await this.ensureConfigFiles(projectPath);
+
+      // Ensure package.json has required dependencies based on components
+      await this.ensurePackageDependencies(projectPath, userPrompt);
+
+      // Validate and fix missing imports in components
+      await this.validateAndFixComponents(projectPath);
+
+      // Create stub components for any missing imported files
+      await this.validateAndFixMissingComponents(projectPath);
+
+      // Fix named imports to default imports in App.jsx
+      await this.validateAndFixAppImports(projectPath);
 
       const files = await this.getProjectFiles(projectPath);
       this.logger.log(`✅ Generated ${files.length} files successfully`);
@@ -261,6 +278,12 @@ export class OpencodeService implements OnModuleInit, OnModuleDestroy {
       if (existingFiles.length >= 5) {
         // Files were created despite API error - consider it a success
         this.logger.log(`✅ Despite API error, found ${existingFiles.length} files - treating as success`);
+        // Still ensure config files
+        await this.ensureConfigFiles(projectPath);
+        await this.ensurePackageDependencies(projectPath, userPrompt);
+        await this.validateAndFixComponents(projectPath);
+        await this.validateAndFixMissingComponents(projectPath);
+        await this.validateAndFixAppImports(projectPath);
         return { message: null, files: existingFiles };
       }
 
@@ -273,6 +296,325 @@ export class OpencodeService implements OnModuleInit, OnModuleDestroy {
       clearTimeout(timeoutId);
       this.activeRequests.delete(requestId);
     }
+  }
+
+  // 🆕 FALLBACK: Create missing config files
+  private async ensureConfigFiles(projectPath: string): Promise<void> {
+    const configs: Record<string, string> = {
+      'vite.config.js': `import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+})`,
+      'tailwind.config.js': `/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./index.html', './src/**/*.{js,jsx,ts,tsx}'],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}`,
+      'postcss.config.js': `export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}`
+    };
+
+    for (const [filename, content] of Object.entries(configs)) {
+      const filePath = path.join(projectPath, filename);
+      if (!(await fs.pathExists(filePath))) {
+        await fs.writeFile(filePath, content, 'utf-8');
+        this.logger.log(`📝 Created fallback config: ${filename}`);
+      }
+    }
+  }
+
+  // 🆕 FALLBACK: Ensure package.json has required dependencies
+  private async ensurePackageDependencies(projectPath: string, prompt: string): Promise<void> {
+    const packageJsonPath = path.join(projectPath, 'package.json');
+
+    if (!(await fs.pathExists(packageJsonPath))) {
+      return;
+    }
+
+    try {
+      const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
+      const projectType = this.detectProjectType(prompt);
+      let modified = false;
+
+      // If dashboard with Chart component, ensure chart.js dependencies
+      if (projectType.type === 'Dashboard' && projectType.components.includes('Chart')) {
+        if (!packageJson.dependencies['chart.js']) {
+          packageJson.dependencies['chart.js'] = '^4.4.1';
+          modified = true;
+          this.logger.log(`📦 Added chart.js dependency`);
+        }
+        if (!packageJson.dependencies['react-chartjs-2']) {
+          packageJson.dependencies['react-chartjs-2'] = '^5.2.0';
+          modified = true;
+          this.logger.log(`📦 Added react-chartjs-2 dependency`);
+        }
+      }
+
+      if (modified) {
+        await fs.writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2), 'utf-8');
+        this.logger.log(`✅ Updated package.json with required dependencies`);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to update package.json: ${error.message}`);
+    }
+  }
+
+  // 🆕 FALLBACK: Validate and fix missing lucide-react imports in components
+  private async validateAndFixComponents(projectPath: string): Promise<void> {
+    const componentsDir = path.join(projectPath, 'src', 'components');
+
+    if (!(await fs.pathExists(componentsDir))) {
+      return;
+    }
+
+    try {
+      const files = await fs.readdir(componentsDir);
+
+      // Common lucide-react icons that might be used
+      const knownIcons = [
+        'BadgeCheck', 'UserPlus', 'FileText', 'Award', 'Menu', 'X', 'Home',
+        'User', 'Settings', 'ChevronDown', 'ChevronUp', 'ChevronLeft', 'ChevronRight',
+        'Search', 'Bell', 'LogOut', 'Plus', 'Minus', 'Edit', 'Trash', 'Check',
+        'Clock', 'Calendar', 'Mail', 'Phone', 'MapPin', 'Star', 'Heart', 'Share',
+        'Download', 'Upload', 'Eye', 'EyeOff', 'TrendingUp', 'TrendingDown',
+        'Users', 'DollarSign', 'Activity', 'BarChart', 'PieChart', 'LineChart',
+        'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'RefreshCw', 'Loader',
+        'AlertCircle', 'AlertTriangle', 'Info', 'HelpCircle', 'CheckCircle',
+        'XCircle', 'Filter', 'MoreHorizontal', 'MoreVertical', 'Bookmark',
+        'Tag', 'Folder', 'File', 'Image', 'Video', 'Music', 'Mic', 'Camera'
+      ];
+
+      const iconPattern = new RegExp(`\\b(${knownIcons.join('|')})\\b`, 'g');
+
+      for (const file of files) {
+        if (!file.endsWith('.jsx') && !file.endsWith('.tsx')) continue;
+
+        const filePath = path.join(componentsDir, file);
+        let content = await fs.readFile(filePath, 'utf-8');
+
+        // Find all icons used in the file
+        const usedIcons = [...new Set(content.match(iconPattern) || [])];
+
+        // Check for existing lucide-react import (single or double quotes)
+        const hasLucideImport = content.includes("from 'lucide-react'") ||
+          content.includes('from "lucide-react"');
+
+        if (usedIcons.length > 0 && !hasLucideImport) {
+          // Add import at top of file
+          const importStatement = `import { ${usedIcons.join(', ')} } from 'lucide-react';\n\n`;
+          content = importStatement + content;
+          await fs.writeFile(filePath, content, 'utf-8');
+          this.logger.log(`📝 Fixed missing imports in ${file}: ${usedIcons.join(', ')}`);
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Failed to validate components: ${error.message}`);
+    }
+  }
+
+  // 🆕 FALLBACK: Create stub components for missing imported files
+  private async validateAndFixMissingComponents(projectPath: string): Promise<void> {
+    const appJsxPath = path.join(projectPath, 'src', 'App.jsx');
+
+    if (!(await fs.pathExists(appJsxPath))) {
+      return;
+    }
+
+    try {
+      const appContent = await fs.readFile(appJsxPath, 'utf-8');
+
+      // Find all imports from ./components/ AND ./pages/
+      const componentImportRegex = /import\s+(\w+)\s+from\s+["']\.\/components\/(\w+)["']/g;
+      const pageImportRegex = /import\s+(\w+)\s+from\s+["']\.\/pages\/(\w+)["']/g;
+
+      const componentImports: { name: string; path: string; folder: string }[] = [];
+      let match;
+
+      // Find component imports
+      while ((match = componentImportRegex.exec(appContent)) !== null) {
+        componentImports.push({ name: match[1], path: match[2], folder: 'components' });
+      }
+
+      // Find page imports
+      while ((match = pageImportRegex.exec(appContent)) !== null) {
+        componentImports.push({ name: match[1], path: match[2], folder: 'pages' });
+      }
+
+      // Create missing files
+      for (const { name, path: componentPath, folder } of componentImports) {
+        const targetDir = path.join(projectPath, 'src', folder);
+        await fs.ensureDir(targetDir);
+
+        const jsxPath = path.join(targetDir, `${componentPath}.jsx`);
+        const tsxPath = path.join(targetDir, `${componentPath}.tsx`);
+
+        if (!(await fs.pathExists(jsxPath)) && !(await fs.pathExists(tsxPath))) {
+          // Create a stub component
+          const stubContent = this.generateStubComponent(name);
+          await fs.writeFile(jsxPath, stubContent, 'utf-8');
+          this.logger.log(`📝 Created stub ${folder}: ${componentPath}.jsx`);
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Failed to validate missing components: ${error.message}`);
+    }
+  }
+
+  // 🆕 FALLBACK: Fix named imports to default imports in App.jsx
+  private async validateAndFixAppImports(projectPath: string): Promise<void> {
+    const appJsxPath = path.join(projectPath, 'src', 'App.jsx');
+
+    if (!(await fs.pathExists(appJsxPath))) {
+      return;
+    }
+
+    try {
+      let appContent = await fs.readFile(appJsxPath, 'utf-8');
+      let modified = false;
+
+      // Pattern to match named imports from ./components/ or ./pages/
+      // import { ComponentName } from "./components/ComponentName"
+      const namedImportPattern = /import\s*{\s*(\w+)\s*}\s*from\s*["']\.\/(components|pages)\/(\w+)["']/g;
+
+      // Replace with default import
+      // import ComponentName from "./components/ComponentName"
+      const newContent = appContent.replace(namedImportPattern, (match, name, folder, path) => {
+        this.logger.log(`📝 Fixed import: ${name} from {named} to default`);
+        modified = true;
+        return `import ${name} from "./${folder}/${path}"`;
+      });
+
+      if (modified) {
+        await fs.writeFile(appJsxPath, newContent, 'utf-8');
+        this.logger.log(`✅ Fixed named imports in App.jsx to use default imports`);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to fix App.jsx imports: ${error.message}`);
+    }
+  }
+
+
+  // Generate a basic stub component
+  private generateStubComponent(name: string): string {
+    // Different templates based on component name
+    const templates: Record<string, string> = {
+      Footer: `function Footer() {
+  return (
+    <footer className="bg-gray-900 text-white py-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+          <div>
+            <h3 className="text-xl font-bold mb-4">Company</h3>
+            <p className="text-gray-400">Building amazing experiences.</p>
+          </div>
+          <div>
+            <h4 className="font-semibold mb-3">Quick Links</h4>
+            <ul className="space-y-2 text-gray-400">
+              <li><a href="#" className="hover:text-white transition">Home</a></li>
+              <li><a href="#" className="hover:text-white transition">About</a></li>
+              <li><a href="#" className="hover:text-white transition">Services</a></li>
+              <li><a href="#" className="hover:text-white transition">Contact</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 className="font-semibold mb-3">Contact</h4>
+            <ul className="space-y-2 text-gray-400">
+              <li>contact@example.com</li>
+              <li>+1 (555) 123-4567</li>
+            </ul>
+          </div>
+          <div>
+            <h4 className="font-semibold mb-3">Follow Us</h4>
+            <div className="flex space-x-4">
+              <a href="#" className="text-gray-400 hover:text-white transition">Twitter</a>
+              <a href="#" className="text-gray-400 hover:text-white transition">LinkedIn</a>
+            </div>
+          </div>
+        </div>
+        <div className="border-t border-gray-800 mt-8 pt-8 text-center text-gray-400">
+          <p>&copy; ${new Date().getFullYear()} Company. All rights reserved.</p>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+export default Footer;`,
+      Header: `function Header() {
+  return (
+    <header className="bg-white shadow-sm sticky top-0 z-50">
+      <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div className="flex justify-between items-center">
+          <div className="text-2xl font-bold text-gray-900">Logo</div>
+          <div className="hidden md:flex space-x-8">
+            <a href="#" className="text-gray-600 hover:text-gray-900 transition">Home</a>
+            <a href="#" className="text-gray-600 hover:text-gray-900 transition">About</a>
+            <a href="#" className="text-gray-600 hover:text-gray-900 transition">Services</a>
+            <a href="#" className="text-gray-600 hover:text-gray-900 transition">Contact</a>
+          </div>
+          <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition">
+            Get Started
+          </button>
+        </div>
+      </nav>
+    </header>
+  );
+}
+
+export default Header;`,
+      Hero: `function Hero() {
+  return (
+    <section className="bg-gradient-to-r from-blue-600 to-purple-600 text-white py-20">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+        <h1 className="text-4xl md:text-6xl font-bold mb-6">Welcome to Our Site</h1>
+        <p className="text-xl md:text-2xl mb-8 text-blue-100">
+          Building amazing digital experiences
+        </p>
+        <div className="flex justify-center gap-4">
+          <button className="bg-white text-blue-600 px-8 py-3 rounded-lg font-semibold hover:bg-blue-50 transition">
+            Get Started
+          </button>
+          <button className="border-2 border-white text-white px-8 py-3 rounded-lg font-semibold hover:bg-white hover:text-blue-600 transition">
+            Learn More
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export default Hero;`,
+    };
+
+    // Return specific template or generic one
+    if (templates[name]) {
+      return templates[name];
+    }
+
+    // Generic stub component
+    return `function ${name}() {
+  return (
+    <section className="py-16 bg-gray-50">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <h2 className="text-3xl font-bold text-center text-gray-900 mb-8">${name}</h2>
+        <p className="text-center text-gray-600">
+          This is the ${name} section. Content coming soon.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+export default ${name};`;
   }
 
   // 🆕 NEW METHOD: Build comprehensive prompt from user preferences

@@ -8,7 +8,6 @@ import { OpencodeModule } from './modules/opencode/opencode.module';
 import { FilesModule } from './modules/files/files.module';
 import { SessionModule } from './modules/session/session.module';
 import { SseModule } from './modules/sse/sse.module';
-import { AiModule } from './modules/ai/ai.module';
 import { ConversationModule } from './conversation/conversation.module';
 import { QueueModule } from './queue/queue.module';
 
@@ -21,7 +20,6 @@ import { QueueModule } from './queue/queue.module';
         FilesModule,
         SessionModule,
         SseModule,
-        AiModule,
         ConversationModule,
         QueueModule,
     ],

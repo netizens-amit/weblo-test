@@ -17,6 +17,7 @@ import {
 import { OpencodeService } from '../modules/opencode/opencode.service';
 import { SessionService } from '../modules/session/session.service';
 import { SseService } from '../modules/sse/sse.service';
+import { FilesService } from '../modules/files/files.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProjectStatus } from '@prisma/client';
 
@@ -33,6 +34,9 @@ export class GenerationProcessor {
 
         @Inject(forwardRef(() => SseService))
         private readonly sse: SseService,
+
+        @Inject(forwardRef(() => FilesService))
+        private readonly filesService: FilesService,
 
         private readonly prisma: PrismaService,
     ) { }
@@ -54,6 +58,10 @@ export class GenerationProcessor {
 
             const session = await this.opencode.createSession(projectId, projectName);
             await this.sessionService.createSessionMapping(projectId, session.id, projectName);
+
+            // 🆕 Start file watcher IMMEDIATELY so files stream in real-time during generation
+            this.filesService.watchProject(projectId, session.id);
+            this.logger.log(`👁️ Started file watcher for real-time streaming`);
 
             // initialize todos
             await this.updateProgress(job, {
@@ -140,7 +148,7 @@ export class GenerationProcessor {
 
             await this.prisma.project.update({
                 where: { id: projectId },
-                data: { status: ProjectStatus.ERROR },
+                data: { status: ProjectStatus.FAILED },
             });
 
             this.sse.emitEvent(projectId, 'generation_error', {
@@ -176,7 +184,7 @@ export class GenerationProcessor {
             'generating': ProjectStatus.GENERATING_CODE,
             'saving_files': ProjectStatus.GENERATING_CODE,
             'completed': ProjectStatus.COMPLETED,
-            'failed': ProjectStatus.ERROR,
+            'failed': ProjectStatus.FAILED,
         };
         return statusMap[status] || ProjectStatus.PENDING;
     }

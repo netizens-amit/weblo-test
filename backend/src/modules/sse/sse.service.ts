@@ -309,11 +309,13 @@ export class SseService {
 
     /**
      * 🆕 EMIT FILE CREATED EVENT
+     * Includes file content so frontend can stream files to WebContainer
      */
-    emitFileCreated(projectId: string, filename: string, size: number) {
+    emitFileCreated(projectId: string, path: string, content: string, size?: number) {
         this.emitEvent(projectId, 'file_created', {
-            filename,
-            size,
+            path,  // Changed from 'filename' to 'path' for frontend compatibility
+            content,  // Include actual file content
+            size: size || content.length,
             timestamp: new Date().toISOString(),
         });
     }

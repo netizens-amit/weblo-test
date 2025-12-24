@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ArrowLeft, Send, Loader2 } from 'lucide-react';
-import { TodoProgress } from './TodoProgress';
+// import { TodoProgress } from './TodoProgress'; // Commented out - section disabled
 import { FileCreationProgress } from './FileCreationProgress';  // 🆕 NEW
 
 interface Message {
@@ -38,7 +38,7 @@ export default function ChatPanel({
   onSendMessage,
   onBack,
   todos,
-  tokenUsage,
+  tokenUsage: _tokenUsage, // Prefixed - section is commented out
   thinkingMessage,
   streamingFiles = {},  // 🆕 Default to empty
 }: ChatPanelProps) {
@@ -105,30 +105,29 @@ export default function ChatPanel({
         )}
 
         {/* TODO PROGRESS */}
-        {todos.length > 0 && (
+        {/* {todos.length > 0 && (
           <div className="my-4">
             <TodoProgress todos={todos} tokenUsage={tokenUsage} isGenerating={isGenerating} />
           </div>
-        )}
+        )} */}
 
         {/* MESSAGES - Filter out first message if it's the original prompt (already shown above) */}
         {messages
           .filter((msg, index) => !(index === 0 && msg.type === 'user' && msg.content === originalPrompt))
           .map((message) => (
-          <div
-            key={message.id}
-            className={`rounded-lg p-4 ${
-              message.type === 'user'
+            <div
+              key={message.id}
+              className={`rounded-lg p-4 ${message.type === 'user'
                 ? 'bg-blue-600 text-white ml-auto max-w-[85%]'
                 : 'bg-slate-800 text-slate-200 border border-slate-700'
-            }`}
-          >
-            {message.stepTitle && (
-              <p className="font-semibold text-sm mb-1">{message.stepTitle}</p>
-            )}
-            <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-          </div>
-        ))}
+                }`}
+            >
+              {message.stepTitle && (
+                <p className="font-semibold text-sm mb-1">{message.stepTitle}</p>
+              )}
+              <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+            </div>
+          ))}
 
         {/* GENERATION COMPLETE */}
         {progress === 100 && !isGenerating && Object.keys(streamingFiles).length > 0 && (
