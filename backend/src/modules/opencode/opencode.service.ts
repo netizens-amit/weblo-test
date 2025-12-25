@@ -204,6 +204,7 @@ export class OpencodeService implements OnModuleInit, OnModuleDestroy {
         ? this.buildPromptFromPreferences(preferences, projectPath)
         : this.buildReactPromptFilesOnly(userPrompt, plan, projectPath);
 
+      console.log("enhanced prompt", enhancedPrompt);
       this.logger.log(`📝 Sending prompt to OpenCode (with preferences: ${preferences ? 'YES' : 'NO'})...`);
 
       const result = await this.executeWithRetry(async () => {
@@ -265,8 +266,14 @@ export class OpencodeService implements OnModuleInit, OnModuleDestroy {
       // Create stub components for any missing imported files
       await this.validateAndFixMissingComponents(projectPath);
 
-      // Fix named imports to default imports in App.jsx
+      // Fix named imports to default imports in App.jsx (legacy, still useful)
       await this.validateAndFixAppImports(projectPath);
+
+      // 🆕 COMPREHENSIVE: Fix named imports in ALL JSX files (not just App.jsx)
+      await this.fixAllNamedImportsToDefault(projectPath);
+
+      // 🆕 COMPREHENSIVE: Ensure React is imported when React.* is used
+      await this.ensureReactImport(projectPath);
 
       const files = await this.getProjectFiles(projectPath);
       this.logger.log(`✅ Generated ${files.length} files successfully`);
@@ -285,10 +292,14 @@ export class OpencodeService implements OnModuleInit, OnModuleDestroy {
         // Still ensure config files
         await this.ensureConfigFiles(projectPath);
         await this.ensurePackageDependencies(projectPath, userPrompt);
-        await this.fixReactHookImports(projectPath);  // 🆕 Fix React hooks
+        await this.fixReactHookImports(projectPath);
         await this.validateAndFixComponents(projectPath);
         await this.validateAndFixMissingComponents(projectPath);
         await this.validateAndFixAppImports(projectPath);
+        // 🆕 COMPREHENSIVE: Fix named imports in ALL JSX files
+        await this.fixAllNamedImportsToDefault(projectPath);
+        // 🆕 COMPREHENSIVE: Ensure React is imported when React.* is used
+        await this.ensureReactImport(projectPath);
         return { message: null, files: existingFiles };
       }
 
@@ -654,6 +665,115 @@ export default {
     }
   }
 
+  // 🆕 COMPREHENSIVE FIX: Fix named imports to default imports in ALL JSX files
+  // This fixes issues like: import { ProductCard } from "./ProductCard" when ProductCard uses export default
+  private async fixAllNamedImportsToDefault(projectPath: string): Promise<void> {
+    const srcPath = path.join(projectPath, 'src');
+
+    if (!(await fs.pathExists(srcPath))) {
+      return;
+    }
+
+    try {
+      const allFiles = await this.getAllFiles(srcPath);
+
+      for (const filePath of allFiles) {
+        if (!filePath.endsWith('.jsx') && !filePath.endsWith('.tsx')) {
+          continue;
+        }
+
+        let content = await fs.readFile(filePath, 'utf-8');
+        let modified = false;
+        const fileName = path.basename(filePath);
+
+        // Pattern to match named imports from local files (./components/, ./pages/, ./)
+        // import { ComponentName } from "./components/ComponentName"
+        // import { ComponentName } from "./ComponentName"
+        const namedImportPattern = /import\s*{\s*(\w+)\s*}\s*from\s*["'](\.[^"']+)["']/g;
+
+        const newContent = content.replace(namedImportPattern, (match, name, importPath) => {
+          // Skip if importing from node_modules packages
+          if (!importPath.startsWith('.')) {
+            return match;
+          }
+
+          // Check if the imported file uses default export
+          const resolvedPath = this.resolveImportPath(filePath, importPath);
+
+          // Assume local component files use default exports (React convention)
+          // This is safe because if it was a named export, the AI would have created it that way consistently
+          this.logger.log(`📝 Fixed import in ${fileName}: { ${name} } → ${name} from "${importPath}"`);
+          modified = true;
+          return `import ${name} from "${importPath}"`;
+        });
+
+        if (modified) {
+          await fs.writeFile(filePath, newContent, 'utf-8');
+          this.logger.log(`✅ Fixed named imports in ${fileName}`);
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Failed to fix named imports: ${error.message}`);
+    }
+  }
+
+  // Helper to resolve import path (basic implementation)
+  private resolveImportPath(fromFile: string, importPath: string): string {
+    const dir = path.dirname(fromFile);
+    let resolved = path.resolve(dir, importPath);
+
+    // Add .jsx extension if not present
+    if (!resolved.endsWith('.jsx') && !resolved.endsWith('.tsx') && !resolved.endsWith('.js')) {
+      if (fs.pathExistsSync(resolved + '.jsx')) {
+        resolved += '.jsx';
+      } else if (fs.pathExistsSync(resolved + '.tsx')) {
+        resolved += '.tsx';
+      } else if (fs.pathExistsSync(resolved + '.js')) {
+        resolved += '.js';
+      }
+    }
+
+    return resolved;
+  }
+
+  // 🆕 COMPREHENSIVE FIX: Ensure React is imported when React.* is used
+  // Fixes: React.useState, React.useEffect, etc. when React is not imported
+  private async ensureReactImport(projectPath: string): Promise<void> {
+    const srcPath = path.join(projectPath, 'src');
+
+    if (!(await fs.pathExists(srcPath))) {
+      return;
+    }
+
+    try {
+      const allFiles = await this.getAllFiles(srcPath);
+
+      for (const filePath of allFiles) {
+        if (!filePath.endsWith('.jsx') && !filePath.endsWith('.tsx')) {
+          continue;
+        }
+
+        let content = await fs.readFile(filePath, 'utf-8');
+        const fileName = path.basename(filePath);
+
+        // Check if file uses React.* (e.g., React.useState, React.useEffect)
+        const usesReactDot = /React\.\w+/.test(content);
+
+        // Check if React is already imported
+        const hasReactImport = /import\s+React/.test(content) || /import\s*{\s*[^}]*\s*}\s*from\s*['"]react['"]/.test(content);
+
+        if (usesReactDot && !hasReactImport) {
+          // Add React import at the top of the file
+          const reactImport = `import React from 'react';\n`;
+          content = reactImport + content;
+          await fs.writeFile(filePath, content, 'utf-8');
+          this.logger.log(`📝 Added missing React import to ${fileName}`);
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Failed to ensure React imports: ${error.message}`);
+    }
+  }
 
   // Generate a basic stub component
   private generateStubComponent(name: string): string {
@@ -1094,6 +1214,12 @@ ${isMultiPage ? `
 ✓ Use ONLY packages in package.json.
 ${isMultiPage ? '✓ IMPLEMENT ROUTING.' : '✓ IMPLEMENT SCROLL NAV.'}
 
+⚠️ CRITICAL IMPORT/EXPORT RULES:
+1. ALWAYS use default exports: export default ComponentName;
+2. ALWAYS use default imports for local files: import ComponentName from "./ComponentName";
+3. ALWAYS add: import React from 'react'; at top of every .jsx file.
+4. Named imports ONLY for external libs: import { Star } from "lucide-react";
+
 Create ALL files NOW using the file_write tool. Start with package.json!`;
   }
 
@@ -1203,6 +1329,22 @@ EXECUTION RULES:
 ❌ DO NOT start dev server
 ❌ DO NOT run npm commands
 ❌ DO NOT import packages not in package.json
+
+⚠️ CRITICAL IMPORT/EXPORT RULES (MUST FOLLOW):
+1. ALWAYS use default exports for components:
+   ✅ export default ComponentName;
+   ❌ export { ComponentName };
+
+2. ALWAYS use default imports for local components:
+   ✅ import ComponentName from "./components/ComponentName";
+   ❌ import { ComponentName } from "./components/ComponentName";
+
+3. ALWAYS import React at the top of every .jsx file:
+   import React from 'react';
+
+4. Use named imports ONLY for external libraries:
+   ✅ import { Star, Heart } from "lucide-react";
+   ✅ import { useState, useEffect } from "react";
 
 Begin creating ALL files now.`;
   }

@@ -30,8 +30,15 @@ export class SessionService {
         }
 
         try {
-            const mapping = await this.prisma.sessionMapping.create({
-                data: {
+            // Use upsert to handle retries gracefully - if a mapping already exists, update it
+            const mapping = await this.prisma.sessionMapping.upsert({
+                where: { projectId },
+                update: {
+                    opencodeSessionId,
+                    title,
+                    directory: directory || '',
+                },
+                create: {
                     projectId,
                     opencodeSessionId,
                     title,
@@ -39,17 +46,11 @@ export class SessionService {
                 },
             });
 
-            this.logger.log(`✅ Session mapping created: ${projectId} -> ${opencodeSessionId}`);
+            this.logger.log(`✅ Session mapping created/updated: ${projectId} -> ${opencodeSessionId}`);
             return mapping;
         } catch (error) {
-            this.logger.error(`Failed to create session mapping for project ${projectId}: ${error.message}`, error.stack);
-
-            // Check for unique constraint violation
-            if (error.code === 'P2002') {
-                throw new BadRequestException(`Session mapping already exists for project ${projectId}`);
-            }
-
-            throw new InternalServerErrorException(`Failed to create session mapping: ${error.message}`);
+            this.logger.error(`Failed to create/update session mapping for project ${projectId}: ${error.message}`, error.stack);
+            throw new InternalServerErrorException(`Failed to create/update session mapping: ${error.message}`);
         }
     }
 

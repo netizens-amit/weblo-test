@@ -519,13 +519,13 @@ export function EditorPage() {
                 <p className="text-slate-400 text-sm mb-6">
                   {thinkingMessage || 'OpenCode is creating your React project...'}
                 </p>
-                <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                {/* <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
                   <div
                     className="bg-blue-500 h-full transition-all duration-500 ease-out"
                     style={{ width: `${progress}%` }}
                   />
-                </div>
-                <p className="text-slate-500 text-xs mt-2 text-right">{progress}%</p>
+                </div> */}
+                {/* <p className="text-slate-500 text-xs mt-2 text-right">{progress}%</p> */}
 
                 {isProjectCompleted && !hasFiles && (
                   <Button onClick={handleRetry} variant="outline" className="mt-4" size="sm">
