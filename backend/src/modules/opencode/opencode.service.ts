@@ -119,6 +119,27 @@ export class OpencodeService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private extractTokenUsage(parts: any[]): { inputTokens: number; outputTokens: number; totalTokens: number; cost?: number } | null {
+    if (!parts || !Array.isArray(parts)) return null;
+
+    const stepFinish = parts.find(p => p.type === 'step-finish');
+    if (!stepFinish || !stepFinish.tokens) return null;
+
+    const tokens = stepFinish.tokens;
+    const inputTokens = tokens.input || 0;
+    const outputTokens = tokens.output || 0;
+    const reasoningTokens = tokens.reasoning || 0;
+    const totalTokens = inputTokens + outputTokens + reasoningTokens;
+    const cost = stepFinish?.cost || 0;
+
+    return {
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      cost,
+    };
+  }
+
   async createSession(projectId: string, projectName: string): Promise<Session> {
     if (!projectId || typeof projectId !== 'string' || projectId.trim().length === 0) {
       throw new BadRequestException('Valid project ID is required for session creation');
@@ -226,6 +247,11 @@ export class OpencodeService implements OnModuleInit, OnModuleDestroy {
         });
       }, abortController.signal);
 
+      const tokenUsage = this.extractTokenUsage(result?.data?.parts);
+      if (tokenUsage) {
+        this.logger.log(`Tokens: ${tokenUsage.totalTokens.toLocaleString()} | Cost: $${tokenUsage.cost.toFixed(6)}`);
+      }
+
       clearTimeout(timeoutId);
 
       this.logger.log(`✅ OpenCode responded, waiting for files...`);
@@ -245,7 +271,7 @@ export class OpencodeService implements OnModuleInit, OnModuleDestroy {
           this.logger.log(`✅ Fallback wrote ${filesWritten.length} files`);
           // Ensure config files exist
           await this.ensureConfigFiles(projectPath);
-          return { message: result, files: filesWritten };
+          return { message: result, files: filesWritten, tokenUsage } as any;
         } else {
           throw new Error('No files were created by OpenCode or fallback parser');
         }
@@ -278,7 +304,7 @@ export class OpencodeService implements OnModuleInit, OnModuleDestroy {
       const files = await this.getProjectFiles(projectPath);
       this.logger.log(`✅ Generated ${files.length} files successfully`);
 
-      return { message: result, files };
+      return { message: result, files, tokenUsage } as any;
     } catch (error) {
       // IMPORTANT: Even if API times out, files might have been created
       // Check for files before throwing error

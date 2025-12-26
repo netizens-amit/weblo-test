@@ -98,16 +98,20 @@ export class GenerationProcessor {
 
             // complete
             const totalTime = Date.now() - startTime;
-            const tokenUsage = this.sse.getTokenUsage(projectId);
+
+            const aiModel = process.env.AI_MODEL || 'grok-code';
+            const aiProvider = process.env.AI_PROVIDER || 'opencode';
+            const tokenUsage = (result as any).tokenUsage;
 
             await this.prisma.project.update({
                 where: { id: projectId },
                 data: {
                     status: ProjectStatus.COMPLETED,
                     progress: 100,
+                    aiModel: aiModel,
                     generationTimeMs: totalTime,
                     tokensUsed: tokenUsage?.totalTokens || 0,
-                    estimatedCost: tokenUsage?.costUSD || 0,
+                    estimatedCost: tokenUsage?.cost || 0,
                 },
             });
 
@@ -126,6 +130,8 @@ export class GenerationProcessor {
                 generationTime: totalTime,
                 files: result.files,
                 tokenUsage,
+                aiModel,
+                aiProvider,
             });
 
             this.logger.log(`✅ Job ${job.id} completed in ${totalTime}ms`);
